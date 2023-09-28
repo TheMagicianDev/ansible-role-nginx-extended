@@ -38,8 +38,13 @@
     - name: "{{ nginx_setup | capitalize }} NGINX dynamic modules"
       ansible.builtin.include_tasks: "{{ role_path }}/tasks/modules/install-modules.yml"
       when:
-        - nginx_modules is defined
-        - nginx_modules | length > 0
+        (
+          nginx_modules is defined and nginx_modules | length > 0
+        ) or
+        (
+          nginx_compile_install_dynamic_modules is defined and
+          nginx_compile_install_dynamic_modules | length > 0
+        )
       tags: nginx_install_modules
 
     - name: Remove NGINX Plus license

@@ -22,9 +22,18 @@ nginx_type: opensource
 # As in https://nginx.org/download/ `nginx-<version>.<extension>`
 # nginx_version: "1.25.1"
 
+# Nginx service
+
 # Start NGINX service.
 # Default is true.
 nginx_start: true
+
+# Nginx systemd
+nginx_service_systemd_src: services/nginx.systemd
+nginx_service_upstart_src: services/nginx.upstart
+nginx_service_upstart_conf_src: services/nginx.conf.upstart
+nginx_service_sysvinit_src: services/nginx.sysvinit
+nginx_service_openrc_src: services/nginx.openrc
 
 # Specify whether you want to install NGINX, upgrade to the latest version, or remove NGINX.
 # Can be used with `nginx_version` to fine tune control which version of NGINX is installed/used on each playbook execution.
@@ -57,6 +66,11 @@ nginx_install_source_build_tools: true
 nginx_install_source_pcre: false
 nginx_install_source_openssl: true
 nginx_install_source_zlib: false
+nginx_install_source_dest: /tmp
+nginx_install_source_modules_path: /usr/lib/nginx/modules
+# nginx_install_source_extra_params: [TODO]
+#   - --with-something
+#   - -anotherparam
 
 # Specify source install module for NGINX Open Source.
 # You can select any of the static modules listed on http://nginx.org/en/docs/configure.html.
@@ -64,6 +78,23 @@ nginx_install_source_zlib: false
 # Default is 'http_ssl_module'. (DO NOT remove it if you need SSL support).
 nginx_static_modules: [http_ssl_module]
 # nginx_static_modules: ['http_v2_module']  # Example for '--with-http_v2_module'
+
+nginx_compile_install_dynamic_modules_only: false
+
+# nginx_compile_install_dynamic_modules:
+#   - name: ""
+#     ngx_addon_name: ""
+#     url: ""
+#     dest: "/tmp"
+#     mode: "0600"
+#   - name: ""
+#     url: ""
+#     dest: "/tmp"
+#     mode: "0600"
+
+nginx_dynamic_module_default:
+  dest: "/tmp"
+  mode: "0600"
 
 # (Optional) Choose where to fetch the NGINX signing key from.
 # Default is the official NGINX signing key host.

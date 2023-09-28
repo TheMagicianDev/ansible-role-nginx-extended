@@ -1,4 +1,15 @@
 ---
+# Original Implemented features
+# - Get latest nginx and compile install from source
+# -- Along compile from source of openssl and others
+# -- Compile what static modules
+# We implemented:
+# - install a specific version
+# - compile dynamic modules
+# To implement later:
+# - Uninstall
+# - Upgrade
+
 - name: Check for build tools
   when: nginx_install_source_build_tools | bool
   block:
@@ -94,17 +105,17 @@
   block:
     - name: Check for PCRE install
       ansible.builtin.stat:
-        path: /tmp/pcre-{{ pcre_version }}
+        path: "{{ nginx_install_source_dest }}/pcre-{{ pcre_version }}"
       register: pcre_result
 
     - name: Check for ZLib install
       ansible.builtin.stat:
-        path: /tmp/zlib-{{ zlib_version }}
+        path: "{{ nginx_install_source_dest }}/zlib-{{ zlib_version }}"
       register: zlib_result
 
     - name: Check for OpenSSL install
       ansible.builtin.stat:
-        path: /tmp/openssl-{{ openssl_version }}
+        path: "{{ nginx_install_source_dest }}/openssl-{{ openssl_version }}"
       register: openssl_result
 
 - name: Install PCRE dependecy from package
@@ -143,13 +154,13 @@
     - name: Download PCRE dependency
       ansible.builtin.get_url:
         url: "{{ (pcre_release == 2) | ternary('https://github.com/PCRE2Project/pcre2/releases/download/pcre2-' ~ pcre_version ~ '/pcre2-' ~ pcre_version ~ '.tar.gz', 'https://ftp.exim.org/pub/pcre/pcre-' ~ pcre_version ~ '.tar.gz') }}"
-        dest: /tmp
+        dest: "{{ nginx_install_source_dest }}"
         mode: "0600"
       register: pcre_source
 
     - name: Ensure PCRE directory exists
       ansible.builtin.file:
-        path: /tmp/pcre-{{ pcre_version }}
+        path: "{{ nginx_install_source_dest }}/pcre-{{ pcre_version }}"
         state: directory
         mode: "0700"
 
@@ -157,23 +168,23 @@
       ansible.builtin.unarchive:
         copy: false
         src: "{{ pcre_source['dest'] }}"
-        dest: /tmp/pcre-{{ pcre_version }}/
+        dest: "{{ nginx_install_source_dest }}/pcre-{{ pcre_version }}/"
         mode: "0700"
         extra_opts: [--strip-components=1]
 
     - name: Configure PCRE dependency
       ansible.builtin.command:
         cmd: ./configure
-        chdir: /tmp/pcre-{{ pcre_version }}
-        creates: /tmp/makefile
+        chdir: "{{ nginx_install_source_dest }}/pcre-{{ pcre_version }}"
+        creates: "{{ nginx_install_source_dest }}/makefile"
 
     - name: Make PCRE dependency
       community.general.make:
-        chdir: /tmp/pcre-{{ pcre_version }}
+        chdir: "{{ nginx_install_source_dest }}/pcre-{{ pcre_version }}"
 
     - name: Install PCRE dependency
       community.general.make:
-        chdir: /tmp/pcre-{{ pcre_version }}
+        chdir: "{{ nginx_install_source_dest }}/pcre-{{ pcre_version }}"
         target: install
 
 - name: Install ZLib dependency from package
@@ -212,13 +223,13 @@
     - name: Download ZLib dependency
       ansible.builtin.get_url:
         url: https://github.com/madler/zlib/releases/download/v{{ zlib_version }}/zlib-{{ zlib_version }}.tar.gz
-        dest: /tmp
+        dest: "{{ nginx_install_source_dest }}"
         mode: "0600"
       register: zlib_source
 
     - name: Ensure ZLib directory exists
       ansible.builtin.file:
-        path: /tmp/zlib-{{ zlib_version }}
+        path: "{{ nginx_install_source_dest }}/zlib-{{ zlib_version }}"
         state: directory
         mode: "0700"
 
@@ -226,23 +237,23 @@
       ansible.builtin.unarchive:
         copy: false
         src: "{{ zlib_source['dest'] }}"
-        dest: /tmp/zlib-{{ zlib_version }}
+        dest: "{{ nginx_install_source_dest }}/zlib-{{ zlib_version }}"
         mode: "0700"
         extra_opts: [--strip-components=1]
 
     - name: Configure ZLib dependency
       ansible.builtin.command:
         cmd: ./configure
-        chdir: /tmp/zlib-{{ zlib_version }}
-        creates: /tmp/makefile
+        chdir: "{{ nginx_install_source_dest }}/zlib-{{ zlib_version }}"
+        creates: "{{ nginx_install_source_dest }}/makefile"
 
     - name: Make ZLib dependency
       community.general.make:
-        chdir: /tmp/zlib-{{ zlib_version }}
+        chdir: "{{ nginx_install_source_dest }}/zlib-{{ zlib_version }}"
 
     - name: Install ZLib dependency
       community.general.make:
-        chdir: /tmp/zlib-{{ zlib_version }}
+        chdir: "{{ nginx_install_source_dest }}/zlib-{{ zlib_version }}"
         target: install
 
 - name: Install OpenSSL dependency from package
@@ -281,13 +292,13 @@
     - name: Download OpenSSL dependency
       ansible.builtin.get_url:
         url: https://github.com/openssl/openssl/archive/refs/tags/openssl-{{ openssl_version }}.tar.gz
-        dest: /tmp/{{ openssl_version }}.tar.gz
+        dest: "{{ nginx_install_source_dest }}/{{ openssl_version }}.tar.gz"
         mode: "0600"
       register: openssl_source
 
     - name: Ensure OpenSSL directory exists
       ansible.builtin.file:
-        path: /tmp/openssl-{{ openssl_version }}
+        path: "{{ nginx_install_source_dest }}/openssl-{{ openssl_version }}"
         state: directory
         mode: "0700"
 
@@ -295,23 +306,23 @@
       ansible.builtin.unarchive:
         copy: false
         src: "{{ openssl_source['dest'] }}"
-        dest: /tmp/openssl-{{ openssl_version }}
+        dest: "{{ nginx_install_source_dest }}/openssl-{{ openssl_version }}"
         mode: "0700"
         extra_opts: [--strip-components=1]
 
     - name: Configure OpenSSL dependency
       ansible.builtin.command:
         cmd: ./config --prefix=/usr/local/openssl --openssldir=/usr/local/openssl shared zlib
-        chdir: /tmp/openssl-{{ openssl_version }}
-        creates: /tmp/makefile
+        chdir: "{{ nginx_install_source_dest }}/openssl-{{ openssl_version }}"
+        creates: "{{ nginx_install_source_dest }}/makefile"
 
     - name: Make OpenSSL dependency
       community.general.make:
-        chdir: /tmp/openssl-{{ openssl_version }}
+        chdir: "{{ nginx_install_source_dest }}/openssl-{{ openssl_version }}"
 
     - name: Install OpenSSL dependency
       community.general.make:
-        chdir: /tmp/openssl-{{ openssl_version }}
+        chdir: "{{ nginx_install_source_dest }}/openssl-{{ openssl_version }}"
         target: install
 
 - name: Get latest NGINX version
@@ -350,11 +361,13 @@
   when:
     - not nginx_result['stat']['exists'] | bool
     - not ansible_check_mode | bool
+  vars:
+    nginx_source_dir: "{{ nginx_install_source_dest }}/nginx-{{ nginx_version }}"
   block:
     - name: Download NGINX
       ansible.builtin.get_url:
         url: https://nginx.org/download/nginx-{{ nginx_version }}.tar.gz
-        dest: /tmp/nginx-{{ nginx_version }}.tar.gz
+        dest: "{{ nginx_install_source_dest }}/nginx-{{ nginx_version }}.tar.gz"
         mode: "0600"
       register: nginx_source
 
@@ -362,13 +375,17 @@
       ansible.builtin.unarchive:
         copy: false
         src: "{{ nginx_source.dest }}"
-        dest: /tmp
+        dest: "{{ nginx_install_source_dest }}"
         mode: "0755"
 
     - name: Set static modules
       ansible.builtin.set_fact:
         nginx_install_source_static_modules: "{{ nginx_install_source_static_modules | default('') + ' --with-' + item }}"
       loop: "{{ nginx_static_modules }}"
+
+    - name: Prepare dynamic modules
+      ansible.builtin.include_tasks:
+        file: "{{ role_path }}/tasks/modules/prepare-compile-dynamic-modules/main.yml"
 
     - name: Configure NGINX
       ansible.builtin.command:
@@ -378,7 +395,7 @@
           --error-log-path=/var/log/nginx/error.log
           --http-log-path=/var/log/nginx/access.log
           --lock-path=/var/lock/nginx.lock
-          --modules-path=/usr/lib/nginx/modules
+          --modules-path={{ nginx_install_source_modules_path }}
           --prefix=/usr
           --pid-path=/var/run/nginx.pid
           --user=nginx
@@ -388,26 +405,45 @@
           {{ nginx_install_source_zlib | ternary('--with-zlib=../zlib-' + zlib_version | string, '') }}
           {{ nginx_install_source_openssl | ternary('--with-openssl=../openssl-' + openssl_version | string, '') }}
           {{ nginx_install_source_static_modules | default('') }}
-        chdir: /tmp/nginx-{{ nginx_version }}
-        creates: /tmp/makefile
+          {{ nginx_install_source_compiled_dynamic_modules | default('') }}
+        chdir: "{{ nginx_source_dir }}"
+        creates: "{{ nginx_install_source_dest }}/makefile"
       register: nginx_configure
 
     - name: Make NGINX
       community.general.make:
-        chdir: /tmp/nginx-{{ nginx_version }}
+        chdir: "{{ nginx_source_dir }}"
+      when: not nginx_compile_install_dynamic_modules_only
 
     - name: Install NGINX
       community.general.make:
-        chdir: /tmp/nginx-{{ nginx_version }}
+        chdir: "{{ nginx_source_dir }}"
         target: install
+      when: not nginx_compile_install_dynamic_modules_only
 
+    - name: Make and Install compiled dynamic modules only (No make and install nginx)
+      when: nginx_compile_install_dynamic_modules_only
+      block:
+        - name: Make modules
+          community.general.make:
+            chdir: "{{ nginx_source_dir }}"
+            target: modules
+        - name: Install modules (copy compiled .so to {{ nginx_install_source_modules_path }})
+          ansible.builtin.copy:
+            src: "{{ nginx_source_dir }}/objs/{{ item.ngx_addon_name }}.so"
+            dest: "{{ nginx_install_source_modules_path }}"
+            remote_src: true
+            owner: nginx
+            group: nginx
+            mode: "0600" # give this permission. If somehow some component. Need to access modules file. You can add 6 permission to the nginx group
+          loop: "{{ nginx_compile_install_dynamic_modules }}"
     - name: Set up systemd
       when: ansible_facts['service_mgr'] == 'systemd'
       notify: (Handler) Run NGINX
       block:
         - name: Upload systemd NGINX service file
           ansible.builtin.copy:
-            src: services/nginx.systemd
+            src: "{{ nginx_service_systemd_src }}"
             dest: "{{ (ansible_facts['os_family'] == 'Suse') | ternary('usr/lib/systemd/system/nginx.service', '/lib/systemd/system/nginx.service') }}"
             owner: root
             group: root
@@ -426,7 +462,7 @@
       block:
         - name: Upload Upstart NGINX service file
           ansible.builtin.copy:
-            src: services/nginx.upstart
+            src: "{{ nginx_service_upstart_src }}"
             dest: /etc/init.d/nginx
             owner: root
             group: root
@@ -434,7 +470,7 @@
 
         - name: Upload Upstart NGINX service conf file
           ansible.builtin.copy:
-            src: services/nginx.conf.upstart
+            src: "{{ nginx_service_upstart_conf_src }}"
             dest: /etc/init/nginx.conf
             owner: root
             group: root
@@ -448,7 +484,7 @@
 
     - name: Upload SysVinit NGINX service file
       ansible.builtin.copy:
-        src: services/nginx.sysvinit
+        src: "{{ nginx_service_sysvinit_src }}"
         dest: /etc/init.d/nginx
         owner: root
         group: root
@@ -470,7 +506,7 @@
 
         - name: Upload OpenRC NGINX service file
           ansible.builtin.copy:
-            src: services/nginx.openrc
+            src: "{{ nginx_service_openrc_src }}"
             dest: /etc/init.d/nginx
             owner: root
             group: root
@@ -479,13 +515,21 @@
         - name: Enable OpenRC NGINX service # noqa no-changed-when
           ansible.builtin.command: rc-update add nginx default
 
-- name: Cleanup downloads
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: absent
-  loop:
-    - "{{ pcre_source['dest'] }}"
-    - "{{ zlib_source['dest'] }}"
-    - "{{ openssl_source['dest'] }}"
-    - "{{ nginx_source['dest'] }}"
-  when: item is defined
+- name: Cleanup downloads archives
+  block:
+    - name: Cleanup nginx, pcre, zlip, openssl
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ pcre_source['dest'] }}"
+        - "{{ zlib_source['dest'] }}"
+        - "{{ openssl_source['dest'] }}"
+        - "{{ nginx_source['dest'] }}"
+      when: item is defined
+    - name: Cleanup compiled dynamic modules archives
+      ansible.builtin.file:
+        path: "{{ item.archive }}"
+        state: absent
+      loop: "{{ nginx_compile_install_dynamic_modules }}"
+      when: item is defined
