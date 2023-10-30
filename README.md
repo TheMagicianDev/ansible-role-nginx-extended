@@ -1,8 +1,24 @@
-[![Ansible Galaxy](https://img.shields.io/badge/galaxy-nginxinc.nginx-5bbdbf.svg)](https://galaxy.ansible.com/nginxinc/nginx)
-[![Molecule CI/CD](https://github.com/nginxinc/ansible-role-nginx/workflows/Molecule%20CI/CD/badge.svg)](https://github.com/nginxinc/ansible-role-nginx/actions)
-[![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Project Status: Active – The project has reached a stable, usable state and is being actively developed.](https://www.repostatus.org/badges/latest/active.svg)](https://www.repostatus.org/#active)
-[![Community Support](https://badgen.net/badge/support/community/cyan?icon=awesome)](https://github.com/nginxinc/ansible-role-nginx/blob/main/SUPPORT.md)
+# ansible-role-nginx-extended
+
+This repo is a fork of the official role at https://github.com/nginxinc/ansible-role-nginx
+
+- This repo try to keep up with the official repo
+- And it does implement (extend with) extra features
+  - Main one is support for `installing dynamic modules from source` ✨🔥
+- No galaxy is published yet. So you have to use `git` to work with this repo.
+- Counting to propose the work in the official repo. And hopefully will be merged. If that happen the documentation here will be updated accordingly.
+- The doc below, is the official one, with slight added elements. To document the extra work. When it comes to links. All point to the official work. Be aware when you use this one. You have to separate the work of this repo and the official one.
+- We do use tags and releases as well to allow people to use specific versions. All versions does start with `e-` standing for extended.
+  - The first tag and release is `e-0.24.3-rc` (pre-release)
+
+Enjoy!
+
+## Main extending features
+
+- Full support for installation of dynamic modules from source.
+  - Support full from source installation of nginx and dynamic modules at once.
+  - Support installation of only dynamic modules separately.
+  - details at [Install Dynamic modules from source](#install-dynamic-modules-from-source)
 
 # 👾 *Help make the NGINX Ansible role better by participating in our [survey](https://forms.office.com/Pages/ResponsePage.aspx?id=L_093Ttq0UCb4L-DJ9gcUKLQ7uTJaE1PitM_37KR881UM0NCWkY5UlE5MUYyWU1aTUcxV0NRUllJSC4u)!* 👾
 
@@ -224,6 +240,8 @@ Working functional playbook examples can be found in the **[`molecule/`](https:/
 
 Do note that if you install this repository via Ansible Galaxy, you will have to replace the role variable in the sample playbooks from `ansible-role-nginx` to `nginxinc.nginx`.
 
+## Install Dynamic modules from source
+
 For installing dynamic modules from source. Check [defaults/main/main.yml](defaults/main/main.yml).
 
 Check the following ( `CMD|CTRL + F` ):
@@ -440,7 +458,7 @@ Full example
       --http-log-path=/var/log/nginx/access.log
       --lock-path=/var/lock/nginx.lock
       --modules-path={{ nginx_install_source_modules_path }}
-      --prefix={{ bitwol_ngx_prefix }}
+      --prefix={{ site_ngx_prefix }}
       --pid-path=/var/run/nginx.pid
       --user=nginx
       --with-mail=dynamic
@@ -652,7 +670,7 @@ Full example
     # nginx_logrotate_conf:
     #   paths:
     #     - /var/log/nginx/*.log
-    #     - "{{ bitwol_ngx_logs_dir }}/*.log"
+    #     - "{{ site_ngx_logs_dir }}/*.log"
     #   options:
     #     - size 50M
     #     - missingok
