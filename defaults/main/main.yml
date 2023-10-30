@@ -68,23 +68,136 @@ nginx_install_source_openssl: true
 nginx_install_source_zlib: false
 nginx_install_source_dest: /tmp
 nginx_install_source_modules_path: /usr/lib/nginx/modules
-# nginx_install_source_extra_params: [TODO]
+nginx_install_source_control_prep_compile_only: false # For internal usage generaly (you can use nginx_install_dynamic_module_only for dynamic module install only)
+# - If you need to install an openssl that is different than the official. Like a one that support Quick. Disable installing from source. And add --with-openssl="" that point to another version source (downloaded before this install task) [TODO] - [] add support for different openssl options quick support ..., - [] add support for not installing openssl at all. So that we can add manual install and flags bellow. The source should be handled before - [] we can add a pre-install cmds run list
+# nginx_install_source_configure_cmd_base: >-
+#   ./configure
+#   --conf-path=/etc/nginx/nginx.conf
+#   --error-log-path=/var/log/nginx/error.log
+#   --http-log-path=/var/log/nginx/access.log
+#   --lock-path=/var/lock/nginx.lock
+#   --modules-path={{ nginx_install_source_modules_path }}
+#   --prefix=/usr
+#   --pid-path=/var/run/nginx.pid
+#   --user=nginx
+#   --with-mail=dynamic
+#   --with-stream
+
+# nginx_install_source_configure_extra_params: # Not needed if nginx_install_source_configure_cmd_base is set
 #   - --with-something
-#   - -anotherparam
+#   - --anotherparam
 
 # Specify source install module for NGINX Open Source.
 # You can select any of the static modules listed on http://nginx.org/en/docs/configure.html.
 # Format is '--with-*' where '*' should be used as static module name in the list below. (see an example below).
 # Default is 'http_ssl_module'. (DO NOT remove it if you need SSL support).
+# --with-mail=dynamic
+# --with-stream
+# > already included in config
+# - You can add --with-file-aio --with-compat
+#    - using `file-aio` `compat`
+#    - However its better to add no module params in `nginx_install_source_configure_extra_params` or in `nginx_install_source_configure_cmd_base` if specified
 nginx_static_modules: [http_ssl_module]
 # nginx_static_modules: ['http_v2_module']  # Example for '--with-http_v2_module'
 
-nginx_compile_install_dynamic_modules_only: false
+nginx_install_dynamic_module_only: false
 
 # nginx_compile_install_dynamic_modules:
-#   - name: ""
-#     ngx_addon_name: ""
-#     url: ""
+#   # ### All params
+#   - name: some_module | some_preset
+#     preset: some_preset (sort of alias to name)
+#     version:
+#     url:
+#     git_clone_opt:
+#        depth: ...
+#     preset_vars:
+#         dep_1:
+#             version:
+#         dep_2:
+#     ngx_module_name:
+#     disable_auto_install: # default false # turn to true when you need to run install_cmds without auto install (Otherwise combine auto-install with install_cmds if needed)
+#     before_configure: "MOD_PAGESPEED_DIR="$HOME/mod_pagespeed/src" # can use >- or >
+#     configure_extra_params
+#     module_path_in_src:
+#     dest:
+#     mode:
+#     module_mode: # mode for final modules when copied (installed)
+#     dependencies:
+#       - name:
+#         version:
+#         ... all package params
+#       - name:
+#         ...
+#     # Those one for complex cmd based operations
+#     dependencies_cmds:
+#       - cmd:
+#         chdir:
+#         creates:
+#       - cmd:
+#         chdir:
+#         creates:
+#     download_cmds # Run Check, download and anything else using shell
+#       - src_dir:
+#       - src_archive_file:
+#       - shell:
+#           cmd:
+#           chdir:
+#           creates:
+#         src_dir: optional
+#         src_archive_file: optional
+#       - shell:
+#           cmd:
+#           chdir:
+#           creates:
+#         src_dir: optional
+#         src_archive_file: optional
+#     configure_cmds
+#       - cmd: # Change to any dir, is expected to be handled in the shell command
+#         chdir:
+#         creates:
+#       - cmd:
+#         chdir:
+#         creates:
+#     make_cmds
+#       - cmd:
+#         chdir:
+#         creates:
+#       - cmd:
+#         chdir:
+#         creates:
+#     install_cmds
+#       - cmd: # Expect to handle full installation, copying the files ....
+#         chdir:
+#         creates:
+#       - cmd:
+#         chdir:
+#         creates:
+#   # This would use the mod_brotli default preset
+#   # - `name`, `version` all that is required
+#   - name: "mod_brotli"
+#     version: 1.0.0rc
+#     dest: "/tmp"
+#     mode: "0600"
+#   - name: "mod_brotli"
+#     ngx_module_name: "ngx_http_brotli_filter_module,ngx_http_brotli_static_module"
+#     url: "https://github.com/google/ngx_brotli/archive/refs/tags/v1.0.0rc.tar.gz"
+#     dest: "/tmp"
+#     mode: "0600"
+#   - name: "mod_brotli"
+#     ngx_module_name:
+#       - ngx_http_brotli_filter_module
+#       - ngx_http_brotli_static_module
+#     url: "https://github.com/google/ngx_brotli/archive/refs/tags/v1.0.0rc.tar.gz"
+#     dest: "/tmp"
+#     mode: "0600"
+
+#   - name: "mod_passenger"
+#     version: 6.0.18
+#     dest: "/usr/share"
+#     mode: "0600"
+#   - name: "mod_passenger"
+#     url: "https://github.com/phusion/passenger/archive/refs/tags/release-6.0.18.tar.gz"
+#     module_path_in_src: src/nginx_module # need to be relative
 #     dest: "/tmp"
 #     mode: "0600"
 #   - name: ""
@@ -93,7 +206,7 @@ nginx_compile_install_dynamic_modules_only: false
 #     mode: "0600"
 
 nginx_dynamic_module_default:
-  dest: "/tmp"
+  dest: "{{ nginx_install_source_dest }}"
   mode: "0600"
 
 # (Optional) Choose where to fetch the NGINX signing key from.

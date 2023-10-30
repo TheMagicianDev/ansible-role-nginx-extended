@@ -75,6 +75,7 @@
 
 # We run this task only when we are compile-installing  dynamic modules (only)
 - name: Install dynamic modules for opensource from source
-  ansible.builtin.include_tasks:
-    "{{ role_path }}/tasks/opensource/install-source.yml"
-  when: nginx_install_from == 'source' and nginx_compile_install_dynamic_modules_only
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/modules/install-compile-dynamic-modules/main.yml"
+  when:
+    - nginx_compile_install_dynamic_modules is defined
+    - nginx_compile_install_dynamic_modules | length > 0

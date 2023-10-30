@@ -20,7 +20,9 @@
   block:
     - name: "{{ nginx_setup | capitalize }} NGINX Open Source"
       ansible.builtin.include_tasks: "{{ role_path }}/tasks/opensource/install-oss.yml"
-      when: nginx_type == 'opensource'
+      when:
+        - nginx_type == 'opensource'
+        - not nginx_install_dynamic_module_only
       tags: nginx_install_oss
 
     - name: Set up NGINX Plus license
@@ -28,11 +30,14 @@
       when:
         - nginx_type == 'plus'
         - nginx_setup_license | bool
+        - not nginx_install_dynamic_module_only
       tags: nginx_setup_license
 
     - name: "{{ nginx_setup | capitalize }} NGINX Plus"
       ansible.builtin.include_tasks: "{{ role_path }}/tasks/plus/install-{{ ansible_facts['os_family'] | lower }}.yml"
-      when: nginx_type == 'plus'
+      when:
+        - nginx_type == 'plus'
+        - not nginx_install_dynamic_module_only
       tags: nginx_install_plus
 
     - name: "{{ nginx_setup | capitalize }} NGINX dynamic modules"
@@ -52,6 +57,7 @@
       when:
         - nginx_type == 'plus'
         - nginx_remove_license | bool
+        - not nginx_install_dynamic_module_only
       tags: nginx_remove_license
 
     - name: Modify systemd parameters
@@ -59,6 +65,7 @@
       when:
         - ansible_facts['service_mgr'] == 'systemd'
         - nginx_service_modify | bool
+        - not nginx_install_dynamic_module_only
       tags: nginx_modify_systemd
 
 - name: Trigger handlers if necessary
@@ -77,6 +84,7 @@
   when:
     - nginx_logrotate_conf_enable | bool
     - nginx_state != 'absent'
+    - not nginx_install_dynamic_module_only
   tags: nginx_logrotate_config
 
 - name: Install NGINX Amplify
@@ -85,4 +93,5 @@
     - nginx_amplify_enable | bool
     - nginx_amplify_api_key is defined
     - nginx_amplify_api_key | length > 0
+    - not nginx_install_dynamic_module_only
   tags: nginx_install_amplify

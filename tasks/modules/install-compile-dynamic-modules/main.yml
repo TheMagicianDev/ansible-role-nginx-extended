@@ -1,0 +1,52 @@
+---
+# This tasks will
+# - Download the set dynamic modules
+# - Unpack the archives
+# - Set the variables for each moduel
+#     - out dir
+#     - configure compile param
+#     - other info (archive path, )
+- name: Install deps, Download, unpack, prepare dynamic modules
+  when: nginx_compile_install_dynamic_modules is defined and nginx_compile_install_dynamic_modules | length > 0
+  vars:
+    modules_temp: []
+  block:
+    - name: Loop modules for preparation
+      ansible.builtin.include_tasks: "{{ role_path }}/tasks/modules/install-compile-dynamic-modules/download-prepare-dynamic-module.yml"
+      loop: "{{ nginx_compile_install_dynamic_modules }}"
+    - name: Override modules var
+      ansible.builtin.set_fact:
+        nginx_compile_install_prepared_dynamic_modules: "{{ modules_temp }}"
+    # - name: Set dynamic modules compile params string for all modules
+    #   ansible.builtin.set_fact:
+    #     nginx_install_source_compiled_dynamic_modules: "{{ (nginx_install_source_compiled_dynamic_modules | default('')) + ' ' + (item.configure | default('')) }}"
+    #   loop: "{{ nginx_compile_install_dynamic_modules }}" # ❗ We are going instead with one module at a time. For the sake of module configure isolation and no conflicting.
+
+- name: Check, download, prepare, NGINX source and 3 deps source and configure command
+  vars:
+    old_prep_compile_only: "{{ nginx_install_source_control_prep_compile_only }}"
+  block:
+    - name: Our dynamic modules prepared
+      ansible.builtin.debug:
+        msg: "{{ nginx_compile_install_prepared_dynamic_modules }}"
+    - name: Activate `prep compile` mode for source-install
+      ansible.builtin.set_fact:
+        nginx_install_source_control_prep_compile_only: true
+    - name: Run install-source for preparation in `nginx_install_source_control_prep_compile_only` mode
+      ansible.builtin.include_tasks: "{{ role_path }}/tasks/opensource/install-source.yml"
+    - name: Reset old `prep compile` mode value
+      ansible.builtin.set_fact:
+        nginx_install_source_control_prep_compile_only: "{{ old_prep_compile_only }}"
+
+- name: Configure, Compile, install dynamic modules
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/modules/install-compile-dynamic-modules/compile-install-one-dynamic-module.yml"
+  loop: "{{ nginx_compile_install_prepared_dynamic_modules }}"
+
+- name: Cleanup compiled dynamic modules archives
+  ansible.builtin.file:
+    path: "{{ item.archive }}"
+    state: absent
+  loop: "{{ nginx_compile_install_prepared_dynamic_modules }}"
+  when:
+    - item is defined
+    - item.archive is defined

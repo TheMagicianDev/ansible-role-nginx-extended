@@ -1,0 +1,79 @@
+---
+- name: Configure, Compile, Install {{ item.name }} module
+  vars:
+    no_unique_configure_module_cmd: >-
+      {{ item.before_configure }}
+      {{ nginx_install_source_configure_cmd }}
+      {{ item.configure }}
+    configure_module_cmd: "{{ no_unique_configure_module_cmd | normalize_shell_cmd_unique }}"
+    nginx_source_dir: "{{ nginx_install_source_dest }}/nginx-{{ nginx_version }}"
+  block:
+    - name: Module({{ item.name }}) > Out configure_module_cmd
+      vars:
+        test:
+          _configure_module_cmd: "{{ configure_module_cmd }}"
+          _no_unique_configure_module_cmd: "{{ no_unique_configure_module_cmd }}"
+      ansible.builtin.debug:
+        var: test
+    - name: Configure module {{ item.name }}
+      vars:
+        b1: configure
+      block:
+        - name: Module({{ item.name }})>{{ b1 }}> Configure module with same nginx compilation config (flags, params) # noqa command-instead-of-shell
+          ansible.builtin.shell:
+            cmd: "{{ configure_module_cmd }}"
+            chdir: "{{ nginx_source_dir }}"
+            # creates: "{{ nginx_source_dir }}/makefile" # [TOCHECK]
+            # creates: "{{ nginx_install_source_dest }}/makefile" # [TOCHECK]
+          changed_when: true
+          when: item.configure_cmds is falsy
+        - name: Module({{ item.name }})>{{ b1 }}> Configure module {{ item.name }} by running configure_cmds [were defined] # noqa command-instead-of-shell
+          ansible.builtin.shell:
+            cmd: "{{ cmd_obj.cmd }}"
+            chdir: "{{ cmd_obj.chdir | default(omit) }}"
+            creates: "{{ cmd_obj.creates | default(omit) }}"
+            removes: "{{ cmd_obj.removes | default(omit) }}"
+          changed_when: cmd_obj.changed_when | default(true)
+          loop: "{{ item.configure_cmds | list }}"
+          loop_control:
+            loop_var: cmd_obj
+    - name: "Make module (compile {{ item.name }} module)"
+      vars:
+        b1: make
+      block:
+        - name: Module({{ item.name }})>{{ b1 }}> Compile module {{ item.name }} (running make)
+          community.general.make:
+            chdir: "{{ nginx_source_dir }}"
+            target: modules
+          when: item.make_cmds is falsy
+        - name: Module({{ item.name }})>{{ b1 }}> Running make modules cmds (make_cmds defined) for {{ item.name }} # noqa command-instead-of-shell
+          ansible.builtin.shell:
+            cmd: "{{ cmd }}"
+          changed_when: true
+          loop: "{{ item.make_cmds | list }}"
+          loop_control:
+            loop_var: cmd
+    - name: Install module {{ item.name }}
+      vars:
+        b1: install
+        ngx_module_name_list: "{{ item.ngx_module_name | split(',') if item.ngx_module_name is string else item.ngx_module_name }}"
+      block:
+        - name: Module({{ item.name }})>{{ b1 }}> Install module {{ item.name }} (auto install) - by copying compiled files to {{ nginx_install_source_modules_path }}
+          ansible.builtin.copy:
+            src: "{{ nginx_source_dir }}/objs/{{ ngx_m_name }}.so"
+            dest: "{{ nginx_install_source_modules_path }}"
+            remote_src: true
+            owner: nginx
+            group: nginx
+            mode: "{{ item.module_mode | default('0700') }}" # give this permission. If somehow some component. Need to access modules file. You can add 6 permission to the nginx group
+          loop: "{{ ngx_module_name_list | list }}"
+          loop_control:
+            loop_var: ngx_m_name
+          when: not item.disable_auto_install
+        - name: Module({{ item.name }})>{{ b1 }}> Run install_cmds (defined) for {{ item.name }} # noqa command-instead-of-shell
+          ansible.builtin.shell:
+            cmd: "{{ cmd }}"
+          changed_when: true
+          loop: "{{ item.install_cmds | list }}"
+          loop_control:
+            loop_var: cmd

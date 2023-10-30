@@ -1,0 +1,767 @@
+---
+# - name: Set nginx_dynamic_module_to_download
+#   ansible.builtin.set_fact:
+#     nginx_dynamic_module_to_download:
+#       name: brotli
+#       url: "https://github.com/google/brotli/archive/refs/tags/v1.1.0.tar.gz"
+#       dest: /Users/mohamedlamineallal/repos/test-ansible/download-nginx-dynamic-modules
+#       mode: "0600"
+
+# dest of the module can be
+# - Either a folder
+#   - in such a case: the downloaded file will be named following the website naming
+# - A file path
+#   - The download will be downloaded to that naming
+#   - ex: `dest: /tmp/my-module.1.0.1.tar.gz`
+
+# - [x] add nginx_install_source_configure_extra_params (list)
+# - [x] check for nginx source or download
+# - [x] check for modules source or download
+# - [x] install modules each separately
+# - [x] install them after nginx get installed
+# - [x] extract nginx configure default build to a var
+#    - var that can be replaced
+#    - easily extend default by override and using the default
+# - [x] Modules
+#    - [x] configure_extra_params
+#    - [x] configure_cmds
+#    - [x] make_cmds
+#    - [x] download_cmds (in preset respect the src_dir dir)
+#    - [x] dependencies using package
+#    - [x] dependencies_cmds
+
+- name: Prepare dynamic module {{ item.name | default(item.preset) }}
+  vars:
+    archive_ext_regex: '\.(tar|gz|zip|rar|7z|tar\.gz|tgz|tar\.bz2)$'
+
+    # Default dynamic modules configs (here to use values from item, like version)
+    # -----------
+    p_name: "{{ item.preset | default(item.name) | default('') }}"
+    p_dest: "{{ item.dest | default(nginx_dynamic_module_default.dest) }}"
+    p_src_dest: "{{
+        (p_dest | regex_search(archive_ext_regex)) is truthy | ternary(
+          p_dest | dirname,
+          p_dest
+        )
+      }}"
+    p_mode: "{{ item.mode | default(nginx_dynamic_module_default.mode) }}"
+    p_vars: "{{ item.preset_vars | default({}) }}"
+
+    default_modules_conf:
+      ##
+      # brotli module (https://github.com/google/ngx_brotli)
+      # - to load
+      # load_module modules/ngx_http_brotli_filter_module.so;
+      # load_module modules/ngx_http_brotli_static_module.so;
+      mod_brotli:
+        url: https://github.com/google/ngx_brotli.git
+        version: master # defaulting to the latest
+        git_clone_opt:
+          depth: 1
+          recursive: true
+        ngx_module_name:
+          - ngx_http_brotli_filter_module
+          - ngx_http_brotli_static_module
+
+        dependencies_cmds:
+          # Compiling brotli lib (which is a submodule in deps/brotli folder)
+          # - We are compiling the latest
+          # - If we want to support a specific version, we can add that by
+          #    - adding a `preset_vars.lib.version`
+          #    - Change ngx_brotli cloning to no recursive
+          #    - mkdir deps folder through dependencies_cmd below (only if not created by default)
+          #    - cd in deps
+          #    - clone brotli with `-b` (branch) param
+          #    - cd in brotli and compile using the command bellow
+          - cmd: >-
+              rm -rf out &&
+              mkdir out &&
+              cd out &&
+              cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_C_FLAGS="-Ofast -m64 -march=native -mtune=native -flto -funroll-loops -ffunction-sections -fdata-sections -Wl,--gc-sections" -DCMAKE_CXX_FLAGS="-Ofast -m64 -march=native -mtune=native -flto -funroll-loops -ffunction-sections -fdata-sections -Wl,--gc-sections" -DCMAKE_INSTALL_PREFIX=./installed .. &&
+              cmake --build . --config Release --target brotlienc
+            chdir: /usr/share/ngx_brotli/deps/brotli
+
+        before_configure: >-
+          export CFLAGS="-m64 -march=native -mtune=native -Ofast -flto -funroll-loops -ffunction-sections -fdata-sections -Wl,--gc-sections" &&
+          export LDFLAGS="-m64 -Wl,-s -Wl,-Bsymbolic -Wl,--gc-sections" &&
+        # adding the `;` at the end is important
+
+        configure_extra_params:
+          - '--with-compat'
+      ##
+      # mod_security (lib dep installed with apt, package manager)
+      # - nginx module (connector)
+      #   - https://github.com/SpiderLabs/ModSecurity-nginx
+      # - The library libmodsecurity
+      #   - https://github.com/SpiderLabs/ModSecurity
+      #   - https://github.com/SpiderLabs/ModSecurity/wiki/Compilation-recipes-for-v3.x#ubuntu-2210
+      #   - https://github.com/SpiderLabs/ModSecurity/wiki/Reference-Manual-%28v3.x%29
+      # >>> in this version libmodsecurity3 is installed using `apt` or package managers
+      #
+      # NOTE: ABOUT THIS PRESET:
+      mod_security:
+        url: "https://github.com/SpiderLabs/ModSecurity-nginx/archive/refs/tags/v{{ item.version | default('1.0.3') }}.tar.gz"
+        configure_extra_params:
+          - '--with-compat'
+        dependencies: "{{
+            (ansible_facts['os_family'] == 'Debian') | ternary(
+              [
+                { 'name': 'libmodsecurity3', 'state': 'present' }
+              ],
+              (ansible_facts['os_family'] == 'RedHat') | ternary(
+                [
+                  { 'name': 'libmodsecurity', 'state': 'present' }
+                ],
+                []
+              )
+            )
+          }}"
+
+      ##
+      # `mod_security_src` preset (lib dep compiled from source)
+      # > in this version we are building libmodsecurity library from source
+      # - nginx module (connector)
+      #   - https://github.com/SpiderLabs/ModSecurity-nginx
+      # - The library libmodsecurity
+      #   - https://github.com/SpiderLabs/ModSecurity
+      #   - https://github.com/SpiderLabs/ModSecurity/wiki/Compilation-recipes-for-v3.x#ubuntu-2210
+      #   - https://github.com/SpiderLabs/ModSecurity/wiki/Reference-Manual-%28v3.x%29
+      # - libmodsecurity
+      #    - we are building from source the latest version (master branch)
+      # - We are supporting as of now, `Debian/Ubuntu` only
+      #   - Dependencies need to be adjusted for the different systems
+      #   - Same for compiling instructions
+      #   - Follow https://github.com/SpiderLabs/ModSecurity/wiki/Compilation-recipes-for-v3.x#ubuntu-2210
+      mod_security_src:
+        url: "https://github.com/SpiderLabs/ModSecurity-nginx/archive/refs/tags/v{{ item.version | default('1.0.3') }}.tar.gz"
+        configure_extra_params:
+          - '--with-compat'
+        # Dependencies
+        # For ubuntu [TODO] conditional
+        # - jammy (22.04), 22.10
+        # { 'name': 'libpcre2-dev', 'state': 'present' },
+        # - 18.04
+        # { 'name': 'libpcre++-dev', 'state': 'present' },
+        # ansible_facts['distribution'] == 'Ubuntu' and
+        # (ansible_facts['distribution_version'] is version('18', '<='))
+        dependencies: "{{
+            (ansible_facts['os_family'] == 'Debian') | ternary(
+              [
+                { 'name': 'git', 'state': 'present' },
+                { 'name': 'g++', 'state': 'present' },
+                { 'name': 'apt-utils', 'state': 'present' },
+                { 'name': 'autoconf', 'state': 'present' },
+                { 'name': 'automake', 'state': 'present' },
+                { 'name': 'build-essential', 'state': 'present' },
+                { 'name': 'libcurl4-openssl-dev', 'state': 'present' },
+                { 'name': 'libgeoip-dev', 'state': 'present' },
+                { 'name': 'liblmdb-dev', 'state': 'present' },
+                (
+                  (
+                    ansible_facts['distribution'] == 'Ubuntu' and
+                    (ansible_facts['distribution_version'] is version('18', '<='))
+                  ) | ternary(
+                    { 'name': 'libpcre++-dev', 'state': 'present' },
+                    { 'name': 'libpcre2-dev', 'state': 'present' }
+                  )
+                ),
+                { 'name': 'libtool', 'state': 'present' },
+                { 'name': 'libxml2-dev', 'state': 'present' },
+                { 'name': 'libyajl-dev', 'state': 'present' },
+                { 'name': 'pkgconf', 'state': 'present' },
+                { 'name': 'wget', 'state': 'present' },
+                { 'name': 'zlib1g-dev', 'state': 'present' }
+              ],
+              []
+            )
+          }}"
+        dependencies_cmds:
+          # - cmd: |
+          #     curl -o "ModSecurity-{{ item.version | default('1.0.3') }}.tar.gz" "https://github.com/SpiderLabs/ModSecurity/archive/refs/tags/v{{ item.version | default('1.0.3') }}.tar.gz" &&
+          #     cd "ModSecurity-{{ item.version | default('1.0.3') }}.tar.gz" &&
+          #     ./build.sh &&
+          #     ./configure &&
+          # If you want to support speicifc version for libmodsecurity
+          # - use git checkout tags/<realease_version>
+          - cmd: >-
+              rm -rf ModSecurity/ &&
+              git clone -b {{ p_vars.lib.version | default('v3/master') }} https://github.com/SpiderLabs/ModSecurity &&
+              cd ModSecurity/ &&
+              git submodule init &&
+              git submodule update &&
+              echo "sh build.sh ..." &&
+              sh build.sh &&
+              echo "./configure --with-pcre2 ..." &&
+              ./configure --with-pcre2 &&
+              echo "make ..." &&
+              make &&
+              make install
+            chdir: "{{ p_src_dest }}"
+            creates: "/usr/local/modsecurity" # That means run the command only if this folder doesn't exist.
+                # Because we are instalilng modsecurity with make install, and that folder is what will get created
+            # changed_when: # no need because of `creates`
+
+      ##
+      # passenger module (https://github.com/phusion/passenger)
+      # - https://github.com/phusion/passenger/blob/stable-6.0/src/nginx_module
+      # - https://www.phusionpassenger.com/
+      mod_passenger:
+        url: "https://github.com/phusion/passenger.git"
+        version: "{{ item.version | default('release-6.0.18') }}"
+        # ngx_module_name: ngx_http_passenger_module # We are relying on auto detection
+        git_clone_opt:
+          depth: 1
+          recursive: true
+        module_path_in_src: "src/nginx_module"
+        dependencies: "{{
+            (ansible_facts['os_family'] == 'Debian') | ternary(
+              [
+                { 'name': 'ruby', 'state': 'present' },
+                { 'name': 'ruby-dev', 'state': 'present' },
+                { 'name': 'rake', 'state': 'present' }
+              ],
+              (ansible_facts['os_family'] == 'RedHat') | ternary(
+                [
+                  { 'name': 'ruby', 'state': 'present' },
+                  { 'name': 'rubygem-rake', 'state': 'present' }
+                ],
+                [
+                  { 'name': 'ruby', 'state': 'present' }
+                ]
+              )
+            )
+          }}"
+        dependencies_cmds:
+          # Install rack (passenger interactive installer does do that)
+          - cmd: '/usr/bin/ruby3.0 /usr/bin/gem install rack'
+          # Add passenger install to path
+        before_configure: >-
+          export PATH=/usr/share/passenger/bin:$PATH &&
+
+
+      ##
+      # mod_pagespeed
+      # Do we need that when using cloudflare ????
+      # - https://github.com/apache/incubator-pagespeed-ngx
+      # - https://github.com/apache/incubator-pagespeed-ngx/wiki/Building-PSOL-From-Source
+      # - deps:
+      #   - build tools
+      #   - psol library
+      #      - can have pre-build binary. Within repo `cat PSOL_BINARY_URL` or in releases page. You find the link as well.
+      #      - From source. I guess this is better.
+      #          -  https://github.com/apache/incubator-pagespeed-ngx/wiki/Building-PSOL-From-Source
+      # - downloading nginx module and build
+      #    - download from git (we added git url support)
+      #    - The flow will automatically handle configure and install
+      #  - for configure
+      #     - we added MOD_PAGESPEED_DIR="$HOME/mod_pagespeed/src" with `before_configure`
+      #
+      mod_pagespeed:
+        url: "https://github.com/pagespeed/ngx_pagespeed.git"
+        git_clone_opt:
+          recursive: false
+        version: "{{ item.version | default('master') }}"
+        ngx_module_name:
+          - ngx_pagespeed
+          - ngx_pagespeed_etag_filter
+        dependencies: "{{
+            (ansible_facts['os_family'] == 'Debian') | ternary(
+              [
+                { 'name': 'apache2', 'state': 'present' },
+                { 'name': 'g++', 'state': 'present' },
+                { 'name': 'python2', 'state': 'present' },
+                { 'name': 'subversion', 'state': 'present' },
+                { 'name': 'gperf', 'state': 'present' },
+                { 'name': 'make', 'state': 'present' },
+                { 'name': 'devscripts', 'state': 'present' },
+                { 'name': 'fakeroot', 'state': 'present' },
+                { 'name': 'git', 'state': 'present' },
+                { 'name': 'curl', 'state': 'present' },
+                { 'name': 'build-essential', 'state': 'present' },
+                { 'name': 'zlib1g-dev', 'state': 'present' },
+                { 'name': 'libpcre3', 'state': 'present' },
+                { 'name': 'libpcre3-dev', 'state': 'present' },
+                { 'name': 'unzip', 'state': 'present' },
+                { 'name': 'uuid-dev', 'state': 'present' },
+              ],
+              (ansible_facts['os_family'] == 'RedHat') | ternary(
+                [
+                  { 'name': 'gcc-c++', 'state': 'present' },
+                  { 'name': 'pcre-devel', 'state': 'present' },
+                  { 'name': 'zlib-devel', 'state': 'present' },
+                  { 'name': 'make', 'state': 'present' },
+                  { 'name': 'unzip', 'state': 'present' },
+                  { 'name': 'libuuid-devel', 'state': 'present' },
+                ],
+                []
+              )
+            )
+          }}"
+        dependencies_cmds:
+          # Build and install psol library
+          # - https://github.com/apache/incubator-pagespeed-ngx/wiki/Building-PSOL-From-Source
+          # - We install by cloning mod_pagespeed (apache one), and building it/
+          #   - psol source is included in it
+          #   - https://github.com/pagespeed/mod_pagespeed.git is used
+          #       - it does redirect to https://github.com/apache/incubator-pagespeed-mod
+          #       - we didn't change for purpose of gclient. And future things.
+          # --- Check note about Centos
+          # [CHECK]
+          # - git checkout ${BRANCH} is right, or should be replaced by the branch we are intersted in
+          #    - Temporally i added BRANCH=master at the top
+          # [TODO]
+          # -
+          # - cmd: >-
+          #     BRANCH={{ p_vars.psol.version | default('master') }} &&
+          #     mkdir -p ./bin &&
+          #     cd ./bin &&
+          #     rm -rf depot_tools &&
+          #     git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git &&
+          #     export PATH=$PATH:{{ p_src_dest }}/bin/depot_tools &&
+          #     rm -rf "{{ p_src_dest }}/mod_pagespeed" &&
+          #     mkdir "{{ p_src_dest }}/mod_pagespeed" &&
+          #     cd "{{ p_src_dest }}/mod_pagespeed" &&
+          #     git clone -b ${BRANCH} https://github.com/apache/incubator-pagespeed-mod.git src &&
+          #     gclient config https://github.com/apache/incubator-pagespeed-mod.git --unmanaged --name=src &&
+          #     cd src/ &&
+          #     git checkout ${BRANCH} &&
+          #     cd .. &&
+          #     gclient sync --force --jobs=1 # add --revision=xxxx for a specific git revision &&
+          #     make AR.host="$PWD/build/wrappers/ar.sh"
+          #       AR.target="$PWD/build/wrappers/ar.sh"
+          #       BUILDTYPE=Release
+          #       mod_pagespeed_test pagespeed_automatic_test &&
+          #     cd "{{ p_src_dest }}/mod_pagespeed/src/pagespeed/automatic" &&
+          #     make BUILDTYPE=Release
+          #       AR.host="$PWD/../../../build/wrappers/ar.sh"
+          #       AR.target="$PWD/../../../build/wrappers/ar.sh"
+          #       all
+          #   chdir: "{{ p_src_dest }}"
+          #   # creates: "{{ p_src_dest }}"
+          - cmd: >-
+              BRANCH={{ p_vars.psol.version | default('master') }} &&
+              mkdir -p ./bin &&
+              cd ./bin &&
+              rm -rf depot_tools &&
+              git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git &&
+              export PATH=$PATH:{{ p_src_dest }}/bin/depot_tools &&
+              rm -rf "{{ p_src_dest }}/incubator-pagespeed-mod" &&
+              git clone -b ${BRANCH} --recursive https://github.com/apache/incubator-pagespeed-mod.git --depth=1 &&
+              cd incubator-pagespeed-mod &&
+              python build/gyp_chromium --depth=. &&
+              make BUILDTYPE=Release mod_pagespeed_test pagespeed_automatic_test &&
+            chdir: "{{ p_src_dest }}"
+            # creates: "{{ p_src_dest }}"
+        # download_cmds:
+        #   # No download will run, because src_dir already exists, due to dependencies_cmds fetch above
+        #   # - This step does allow download avoidance. And would define the temp_src_dir (src_dir), that is used to define `module_dir`, which is used to generate --add-dynamic-module="" (in combination with module_path_in_src | module_src = src_dir | src_dir + module_path_in_src). So the install automation will pick up. And manage the installation.
+        #   # - in our case it's src_dir
+        #   # - Otherwise if not for that, we would have to execute configure_cmds (to run our own config commands)
+        #   - src_dir: "{{ p_src_dest }}/mod_pagespeed"
+        before_configure: >-
+          MOD_PAGESPEED_DIR="{{ p_src_dest }}/mod_pagespeed/src"
+      ##
+      # mod_geoip2 (https://github.com/leev/ngx_http_geoip2_module)
+      # - https://github.com/leev/ngx_http_geoip2_module
+      # - https://github.com/maxmind/libmaxminddb/blob/main/README.md
+      mod_geoip2:
+        url: "https://github.com/leev/ngx_http_geoip2_module.git"
+        version: "{{ item.version | default('master') }}"
+        ngx_module_name:
+          - ngx_http_geoip2_module
+          - ngx_stream_geoip2_module
+        configure_extra_params:
+          - '--with-compat'
+        # deps:
+        # - libmaxminddb
+        #   - https://github.com/maxmind/libmaxminddb/blob/main/README.md
+        dependencies: "{{
+            (ansible_facts['os_family'] == 'Debian') | ternary(
+              [
+                { 'name': 'libmaxminddb0', 'state': 'present' },
+                { 'name': 'libmaxminddb-dev', 'state': 'present' },
+                { 'name': 'mmdb-bin', 'state': 'present' }
+              ],
+              (ansible_facts['os_family'] == 'RedHat') | ternary(
+                [],
+                []
+              )
+            )
+          }}"
+
+    # -----------
+
+    is_preset: "{{
+        (
+          item.preset is defined
+          or
+          (
+            (item.url is not defined) and
+            (item.download_cmds is not defined) and
+            (p_name is truthy) and
+            (default_modules_conf[p_name] is defined)
+          )
+        ) is truthy
+      }}"
+
+    preset_conf: "{{ is_preset | ternary(
+      default_modules_conf[p_name], None) }}"
+
+    name: "{{ item.name | default(preset_conf.name) | default(item.preset) | default('') }}"
+
+    # Defined module variables
+    version: "{{ item.version | default(preset_conf.version if is_preset else None) | default(None) }}"
+    url: "{{ item.url | default(preset_conf.url if is_preset else '') | default('') }}"
+    git_clone_opt: "{{
+        item.git_clone_opt |
+        default(preset_conf.git_clone_opt if is_preset else None) |
+        default(None)
+      }}"
+    is_git: "{{ (url | trim | regex_search('.git$')) is truthy }}"
+    git_repo_name: "{{
+        is_git | ternary(
+          (url | regex_search('.*\\/(.*?)(.git|)$', '\\1') or []) | join,
+          ''
+        )
+      }}"
+    ngx_module_name: "{{
+        item.ngx_module_name |
+        default(preset_conf.ngx_module_name if is_preset else None) |
+        default(None)
+      }}"
+    disable_auto_install: "{{
+        item.disable_auto_install |
+        default(preset_conf.disable_auto_install if is_preset else false) |
+        default(false)
+      }}"
+    before_configure: "{{
+        item.before_configure |
+        default(preset_conf.before_configure if is_preset else '') |
+        default('')
+      }}"
+    configure_extra_params: "{{
+        item.configure_extra_params |
+        default(preset_conf.configure_extra_params if is_preset else '') |
+        default('')
+      }}"
+    module_path_in_src: "{{
+        item.module_path_in_src |
+        default(preset_conf.module_path_in_src if is_preset else None) |
+        default(None)
+      }}"
+    dest: "{{
+        item.dest |
+        default(preset_conf.dest if is_preset else nginx_dynamic_module_default.dest) |
+        default(nginx_dynamic_module_default.dest)
+      }}"
+    mode: "{{
+        item.mode |
+        default(preset_conf.mode if is_preset else nginx_dynamic_module_default.mode) |
+        default(nginx_dynamic_module_default.mode)
+      }}"
+    dependencies: "{{
+        item.dependencies |
+        default(preset_conf.dependencies if is_preset else None) |
+        default(None)
+      }}"
+    dependencies_cmds: "{{
+        item.dependencies_cmds |
+        default(preset_conf.dependencies_cmds if is_preset else None) |
+        default(None)
+      }}"
+    download_cmds: "{{
+        item.download_cmds |
+        default(preset_conf.download_cmds if is_preset else None) |
+        default(None)
+      }}"
+    configure_cmds: "{{
+        item.configure_cmds |
+        default(preset_conf.configure_cmds if is_preset else None) |
+        default(None)
+      }}"
+    make_cmds: "{{
+        item.make_cmds |
+        default(preset_conf.make_cmds if is_preset else None) |
+        default(None)
+      }}"
+    install_cmds: "{{
+        item.install_cmds |
+        default(preset_conf.install_cmds if is_preset else None) |
+        default(None)
+      }}"
+  block:
+    # ------ Download module source handling
+    - name: "(Module: {{ name }}) Check and Download the dynamic module source" # noqa jinja[spacing]
+      vars:
+        b1: Download source
+      block:
+        - name: "(Module: {{ name }})>  Case(url): Check, Download source using url"
+          when:
+            - url is truthy
+          vars:
+            b2: case(url)
+          block:
+            # 🔥 ----->
+            - name: "(Module: {{ name }}) Check that source doesn't exist (getting src dir stat)"
+              vars:
+                b3: check_exist
+              block:
+                - name: "(Module: {{ name }}) Get source dir, archive file relative to dest type (dir or archive file)"
+                  block:
+                    - name: "(Module: {{ name }}) Case: dest is a folder ({{ dest }})"
+                      when: dest | regex_search(archive_ext_regex) is falsy
+                      vars:
+                        b4: dest(folder)
+                      block:
+                        - name: "(Module: {{ name }}){{ b1 }}>{{ b2 }}>{{ b3 }}>{{ b4 }}> Url is a git repo"
+                          when: is_git
+                          ansible.builtin.set_fact:
+                            temp_src_dir_name: "{{ git_repo_name }}"
+                            temp_src_dir: "{{ dest }}/{{ git_repo_name }}"
+                        - name: "(Module: {{ name }}) Url should be an archive"
+                          when: not is_git
+                          vars:
+                            b5: url(archive)
+                          block:
+                            - name: "(Module: {{ name }})>{{ b1 }}>{{ b2 }}>{{ b3 }}>{{ b4 }}>{{ b5 }} Send a HEAD request to the URL"
+                              ansible.builtin.uri:
+                                url: "{{ url }}"
+                                method: HEAD
+                              register: remote_file_info
+                            - name: "(Module: {{ name }})>{{ b1 }}>{{ b2 }}>{{ b3 }}>{{ b4 }}>{{ b5 }}> Extract archive filename and src dir name from Content-Disposition header"
+                              vars:
+                                remote_file_name: "{{ (remote_file_info.content_disposition | regex_search('filename=(.*?)$', '\\1') or []) | join }}"
+                                src_dir_name: "{{ remote_file_name | regex_replace(archive_ext_regex, '') }}"
+                                src_dir: "{{ dest }}/{{ src_dir_name }}"
+                              ansible.builtin.set_fact:
+                                temp_archive_name: "{{ remote_file_name }}"
+                                temp_archive_file: "{{ dest }}/{{ remote_file_name }}"
+                                temp_src_dir_name: "{{ src_dir_name }}"
+                                temp_src_dir: "{{ src_dir }}"
+                              when: remote_file_info.content_disposition is defined
+                    - name: "(Module: {{ name }}) >{{ b1 }}>{{ b2 }}>{{ b3 }}>dest(archive)> set vars for ({{ dest }})"
+                      ansible.builtin.set_fact:
+                        temp_archive_name: "{{ dest | basename }}"
+                        temp_archive_file: "{{ dest }}"
+                        temp_src_dir_name: "{{ dest | basename | regex_replace(archive_ext_regex, '') }}"
+                        temp_src_dir: "{{ dest | regex_replace(archive_ext_regex, '') }}"
+                      when: dest | regex_search(archive_ext_regex) is truthy
+                - name: "(Module: {{ name }})>{{ b1 }}>{{ b2 }}> Get src dir stat"
+                  ansible.builtin.stat:
+                    path: "{{ temp_src_dir }}"
+                  register: temp_src_dir_stat
+            - name: "(Module: {{ name }})> Download source if doesn't exist"
+              when:
+                - not temp_src_dir_stat.stat.exists
+              vars:
+                b3: src(download)
+              block:
+                - name: "(Module: {{ name }})>{{ b1 }}>{{ b2 }}>{{ b3 }}> Git clone if git link" # noqa jinja[spacing] latest[git]
+                  when: is_git
+                  ansible.builtin.git:
+                    # dest: "{{ dest }}/{{ git_repo_name }}"
+                    # version: "{{ version }}"
+                    # depth: "{{ git_clone_opt.depth | default(0) }}"
+                    # recursive: "{{ git_clone_opt.recursive | default(false) }}"
+                    # update: "{{ git_clone_opt.update | default(true) }}"
+                  args: "{{
+                      (git_clone_opt or {} ) | combine({
+                        'repo': url,
+                        'dest': (dest + '/' + git_repo_name),
+                        'version': version,
+                        'depth': (git_clone_opt.depth | default(1)),
+                        'recursive': (git_clone_opt.recursive | default(false))
+                      })
+                    }}"
+                - name: "(Module: {{ name }}) Download and unpack if an archive"
+                  when: not is_git
+                  vars:
+                    b4: archive
+                  block:
+                    - name: "(Module: {{ name }})>{{ b1 }}>{{ b2 }}>{{ b3 }}>{{ b4 }}> Download archive"
+                      ansible.builtin.get_url:
+                        url: "{{ url }}"
+                        dest: "{{ dest }}"
+                        mode: "{{ mode }}"
+                      register: nginx_dynamic_module_download_result
+                    # We unpack the downloaded file with it's downloaded name
+                    # - If a user want to name the module folder in some way. He should set the dest for the module download with `dest: /tmp/my-module.1.0.1.tar.gz`
+                    # -- Than the umpacking will be in same folder ()'/tmp' here) and gonna be `/tmp/my-module.1.0.1`
+                    - name: "(Module: {{ name }})>{{ b1 }}>{{ b2 }}>{{ b3 }}>{{ b4 }}> Unpack Downloaded archive"
+                      ansible.builtin.unarchive:
+                        copy: false
+                        src: "{{ nginx_dynamic_module_download_result.dest }}"
+                        dest: "{{ nginx_dynamic_module_download_result.dest | dirname }}"
+                        mode: "0700"
+                    # ----------- Left as reference only
+                        # list_files: true # removed because we no more get the dir with `Set temp src dir temp_src_dir var` below
+                        # extra_opts:
+                        #   - --strip-components=1
+                    #   register: nginx_dynamic_module_unarchive_result
+                    # - name: "(Module: {{ name }}) Set temp src dir temp_src_dir var" # noqa jinja[spacing]
+                    #   ansible.builtin.set_fact:
+                    #     temp_src_dir: "{{
+                    #         nginx_dynamic_module_unarchive_result.dest +
+                    #         '/' +
+                    #         (
+                    #           nginx_dynamic_module_unarchive_result.files[0] |
+                    #           regex_replace('^(.*)\\/$', '\\1')
+                    #         )
+                    #       }}"
+                    # --------------
+        # 🔥 ----->
+        - name: "(Module: {{ name }}) Check, Download source using download_cmds" # noqa command-instead-of-shell
+          when:
+            - download_cmds is truthy
+          vars:
+            b2: case(download_cmds)
+          block:
+            - name: "(Module: {{ name }}) Check if src dir exists"
+              when:
+                - download_cmds[0].src_dir is defined
+              vars:
+                b3: check(src_exist)
+              block:
+                - name: "(Module: {{ name }})>{{ b1 }}>{{ b2 }}>{{ b3 }}> Set src dir, archive vars"
+                  ansible.builtin.set_fact:
+                    temp_archive_name: "{{ (download_cmds[0].src_archive_file | default('')) | basename }}"
+                    temp_archive_file: "{{ download_cmds[0].src_archive_file }}"
+                    temp_src_dir_name: "{{ download_cmds[0].src_dir | basename }}"
+                    temp_src_dir: "{{ download_cmds[0].src_dir }}"
+                - name: "(Module: {{ name }})>{{ b1 }}>{{ b2 }}>{{ b3 }}> Get src dir stat"
+                  ansible.builtin.stat:
+                    path: "{{ temp_src_dir }}"
+                  register: temp_src_dir_stat
+            - name: "(Module: {{ name }})>{{ b1 }}>{{ b2 }}> Run Download source cmds" # noqa command-instead-of-shell
+              ansible.builtin.shell:
+                cmd: "{{ cmd_obj.shell.cmd }}"
+                chdir: "{{ cmd_obj.shell.chdir | default(omit) }}"
+                creates: "{{ cmd_obj.shell.creates | default(omit) }}"
+                removes: "{{ cmd_obj.shell.removes | default(omit) }}"
+              changed_when: cmd_obj.shell.changed_when | default(omit)
+              loop: "{{ download_cmds | list }}"
+              loop_control:
+                loop_var: cmd_obj
+              when: >- # If not defined, just running commands. Or if dir is set, and dir doesn't exists
+                (temp_src_dir_stat is defined and not temp_src_dir_stat.stat.exits) or
+                (temp_src_dir_stat is undefined)
+    # ----- dependencies installation and handling
+    - name: "(Module: {{ name }}) Install dependencies"
+      block:
+        - name: "(Module: {{ name }}) Install dependencies"
+          ansible.builtin.package: "{{ dependency }}"
+          loop: "{{ dependencies | list }}"
+          loop_control:
+            loop_var: dependency
+        - name: "(Module: {{ name }}) Run cmds dependencies install" # noqa command-instead-of-shell
+          ansible.builtin.shell:
+            cmd: "{{ cmd_obj.cmd }}"
+            chdir: "{{ cmd_obj.chdir | default(omit) }}"
+            creates: "{{ cmd_obj.creates | default(omit) }}"
+            removes: "{{ cmd_obj.removes | default(omit) }}"
+          changed_when: cmd_obj.changed_when | default(omit)
+          loop: "{{ dependencies_cmds | list }}"
+          loop_control:
+            loop_var: cmd_obj
+    # ----->
+    - name: "(Module: {{ name }}) Update item object with download, unarchive, configure info and ngx_module_name" # noqa jinja[spacing]
+      vars:
+        b1: update(item)
+        module_dir: "{{ (temp_src_dir + '/' + module_path_in_src) if module_path_in_src is truthy else (temp_src_dir) }}"
+        configure: "--add-dynamic-module=\"{{ module_dir }}\" {{ configure_extra_params | join }}"
+      block:
+        - name: "(Module: {{ name }}) Get module name from config file (auto-detect)"
+          when:
+            - ngx_module_name is falsy
+          vars:
+            b2: get(name,auto(config))
+          block:
+            - name: Slurp mmmmm
+              vars:
+                test:
+                  module_dir: "{{ module_dir }}"
+                  module_path_in_src: "{{ module_path_in_src }}"
+                  temp_src_dir: "{{ temp_src_dir }}"
+                  is_true: "{{ module_path_in_src is truthy }}"
+              ansible.builtin.debug:
+                var: test
+            - name: "(Module: {{ name }})>{{ b1 }}>{{ b2 }}>Read config file"
+              ansible.builtin.slurp:
+                src: "{{ module_dir }}/config"
+              register: module_config
+            - name: "(Module: {{ name }}) Get module name" # noqa jinja[spacing]
+              vars:
+                b3: module_name
+                first_resolve_name: "{{
+                    (module_config.content | b64decode |
+                    regex_search('ngx_module_name=[\"]?([^\"\\s]+)[\"]?', '\\1') or []) |
+                    join
+                  }}"
+                is_resolved_name_a_var: "{{ (first_resolve_name | regex_search('^\\$')) is truthy }}"
+                second_resolve_name: "{{
+                    is_resolved_name_a_var | ternary(
+                      (
+                        module_config.content | b64decode |
+                        regex_search(
+                          ((first_resolve_name | regex_replace('^\\$', '')) + '=[\"]?([^\"\\s]+)[\"]?'),
+                          '\\1'
+                        ) or []
+                      ) | join,
+                      first_resolve_name
+                    )
+                  }}"
+                is_second_resolve_name_a_var: "{{ (second_resolve_name | regex_search('^\\$')) is truthy }}"
+              block:
+                - name: "(Module: {{ name }})>{{ b1 }}>{{ b2 }}>{{ b3 }}> fail name still a var after second resolve"
+                  ansible.builtin.fail:
+                    msg: |
+                      Failed to read the name. ngx_module_name="{{ first_resolve_name }}", and {{ first_resolve_name }}="{{ second_resolve_name }}". As it is now. We do implement only one resolve of variables. If getting the value from var assign comes as anohter var. We bail out. You have to set the `ngx_module_name` manually. If this is a preset, you can override and set manually `ngx_module_name` as well. And you should fill an issue for the developpers to fix the preset.
+                  when: is_second_resolve_name_a_var
+                - name: "(Module: {{ name }})>{{ b1 }}>{{ b2 }}>{{ b3 }}> fail couldn't find the `ngx_module_name` in config file"
+                  ansible.builtin.fail:
+                    msg: |
+                      config file of the module seems to not contain `ngx_module_name` var. We support auto name resolution, only for modules that does define it in the main config file in root.
+                      If the configuration is a more complex one. Or a one that rely on other config files. Then please go check the module. And get the name yourself.
+                      (Start by the doc. Get the name form there. If there isn't go and check the code source. Start by the root config. And follow up the call to other config files ...
+                      And you can use a search cross all project, and search for `ngx_module_name` string. To go faster if the config is more complex. Generally it's not.)
+                  when:
+                    - not is_second_resolve_name_a_var
+                    - second_resolve_name is falsy
+                - name: "(Module: {{ name }})>{{ b1 }}>{{ b2 }}>{{ b3 }}> Set temp_ngx_module_name var"
+                  ansible.builtin.set_fact:
+                    temp_ngx_module_name: "{{ second_resolve_name }}"
+        # We are constructing a temp modules list, that contain the updated items. In the parent task we do override the original modules list to reflect the updates
+        - name: "(Module: {{ name }})>{{ b1 }}> Add updated item to modules_temp" # noqa jinja[spacing]
+          ansible.builtin.set_fact:
+            modules_temp: "{{
+                modules_temp + [
+                  item |
+                  combine({
+                    'name': name,
+                    'is_preset': is_preset,
+                    'preset_conf': preset_conf,
+                    'version': version,
+                    'url': url,
+                    'ngx_module_name': ngx_module_name or (temp_ngx_module_name | default(name)),
+                    'disable_auto_install': disable_auto_install,
+                    'before_configure': before_configure,
+                    'configure_extra_params': configure_extra_params,
+                    'module_path_in_src': module_path_in_src,
+                    'dest': dest,
+                    'mode': mode,
+                    'dependencies': dependencies,
+                    'dependencies_cmds': dependencies_cmds,
+                    'download_cmds': download_cmds,
+                    'configure_cmds': configure_cmds,
+                    'make_cmds': make_cmds,
+                    'install_cmds': install_cmds,
+                    'module_dir': module_dir,
+                    'configure': configure,
+                    'archive_name': temp_archive_name | default(''),
+                    'archive_file': temp_archive_file | default(''),
+                    'src_dir_name': temp_src_dir_name,
+                    'src_dir': temp_src_dir,
+                    'src_dir_stat': temp_src_dir_stat
+                  })
+                ]
+              }}"

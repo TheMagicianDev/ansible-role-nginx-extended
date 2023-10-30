@@ -348,6 +348,7 @@
 - name: Add NGINX group
   ansible.builtin.group:
     name: nginx
+  when: not nginx_install_source_control_prep_compile_only
 
 - name: Add NGINX user
   ansible.builtin.user:
@@ -356,20 +357,41 @@
     comment: nginx user
     home: /var/cache/nginx
     shell: /sbin/nologin
+  when: not nginx_install_source_control_prep_compile_only
 
 - name: Install NGINX
-  when:
-    - not nginx_result['stat']['exists'] | bool
-    - not ansible_check_mode | bool
+  when: (
+      (not nginx_result['stat']['exists'] | bool) and
+      (not ansible_check_mode | bool)
+    ) or nginx_install_source_control_prep_compile_only
   vars:
-    nginx_source_dir: "{{ nginx_install_source_dest }}/nginx-{{ nginx_version }}"
+    ngx_source_dir: "{{ nginx_install_source_dest }}/nginx-{{ nginx_version }}"
+    default_configure_base_cmd: >-
+      ./configure
+      --conf-path=/etc/nginx/nginx.conf
+      --error-log-path=/var/log/nginx/error.log
+      --http-log-path=/var/log/nginx/access.log
+      --lock-path=/var/lock/nginx.lock
+      --modules-path={{ nginx_install_source_modules_path }}
+      --prefix=/usr
+      --pid-path=/var/run/nginx.pid
+      --user=nginx
+      --with-mail=dynamic
+      --with-stream
+    configure_base_cmd: "{{ nginx_install_source_configure_cmd_base | default(default_configure_base_cmd) }}"
   block:
+    - name: Set Nginx source dir globally (as fact)
+      ansible.builtin.set_fact:
+        nginx_source_dir: "{{ ngx_source_dir }}"
+
     - name: Download NGINX
       ansible.builtin.get_url:
         url: https://nginx.org/download/nginx-{{ nginx_version }}.tar.gz
         dest: "{{ nginx_install_source_dest }}/nginx-{{ nginx_version }}.tar.gz"
         mode: "0600"
       register: nginx_source
+      when:
+        - not nginx_install_source_control_prep_compile_only
 
     - name: Unpack NGINX
       ansible.builtin.unarchive:
@@ -377,68 +399,59 @@
         src: "{{ nginx_source.dest }}"
         dest: "{{ nginx_install_source_dest }}"
         mode: "0755"
+      when:
+        - not nginx_install_source_control_prep_compile_only
 
     - name: Set static modules
       ansible.builtin.set_fact:
         nginx_install_source_static_modules: "{{ nginx_install_source_static_modules | default('') + ' --with-' + item }}"
       loop: "{{ nginx_static_modules }}"
 
-    - name: Prepare dynamic modules
-      ansible.builtin.include_tasks:
-        file: "{{ role_path }}/tasks/modules/prepare-compile-dynamic-modules/main.yml"
-
-    - name: Configure NGINX
-      ansible.builtin.command:
-        cmd: >-
-          ./configure
-          --conf-path=/etc/nginx/nginx.conf
-          --error-log-path=/var/log/nginx/error.log
-          --http-log-path=/var/log/nginx/access.log
-          --lock-path=/var/lock/nginx.lock
-          --modules-path={{ nginx_install_source_modules_path }}
-          --prefix=/usr
-          --pid-path=/var/run/nginx.pid
-          --user=nginx
-          --with-mail=dynamic
-          --with-stream
+    - name: Prepare NGINX configure command
+      vars:
+        no_uniq_configure_cmd: >-
+          {{ configure_base_cmd }}
           {{ nginx_install_source_pcre | ternary('--with-pcre=../pcre-' + pcre_version | string, '') }}
           {{ nginx_install_source_zlib | ternary('--with-zlib=../zlib-' + zlib_version | string, '') }}
           {{ nginx_install_source_openssl | ternary('--with-openssl=../openssl-' + openssl_version | string, '') }}
+          {{ nginx_install_source_configure_extra_params | default([]) | join(' ') }}
           {{ nginx_install_source_static_modules | default('') }}
-          {{ nginx_install_source_compiled_dynamic_modules | default('') }}
+      # {{ configure_base_cmd | regex_replace('\s*\n$', '') }}
+      # {{ nginx_install_source_pcre | ternary('--with-pcre=../pcre-' + pcre_version | string, '') | regex_replace('\s*\n$', '') }}
+      # {{ nginx_install_source_zlib | ternary('--with-zlib=../zlib-' + zlib_version | string, '') | regex_replace('\s*\n$', '') }}
+      # {{ nginx_install_source_openssl | ternary('--with-openssl=../openssl-' + openssl_version | string, '') | regex_replace('\s*\n$', '') }}
+      # {{ nginx_install_source_configure_extra_params | default([]) | join(' ') | regex_replace('\s*\n$', '') }}
+      # {{ nginx_install_source_static_modules | default('') }}
+        # split_sep: "/>>/>>/"
+        # configure_cmd: "{{ no_uniq_configure_cmd | regex_replace('\\s+?--', split_sep + '--') | split(split_sep) | map('trim') | unique | join(' ') }}"
+        configure_cmd: "{{ no_uniq_configure_cmd | normalize_shell_cmd_unique }}" # noqa jinja[invalid]
+      ansible.builtin.set_fact:
+        ____no_uniq_configure_cmd: "{{ no_uniq_configure_cmd }}"
+        nginx_install_source_configure_cmd: "{{ configure_cmd }}"
+
+    - name: Configure NGINX
+      ansible.builtin.shell:
+        cmd: "{{ nginx_install_source_configure_cmd }}"
         chdir: "{{ nginx_source_dir }}"
-        creates: "{{ nginx_install_source_dest }}/makefile"
+        creates: "{{ nginx_install_source_dest }}/makefile" # [TOCHECK]
       register: nginx_configure
+      when: not nginx_install_source_control_prep_compile_only
 
     - name: Make NGINX
       community.general.make:
         chdir: "{{ nginx_source_dir }}"
-      when: not nginx_compile_install_dynamic_modules_only
+      when: not nginx_install_source_control_prep_compile_only
 
     - name: Install NGINX
       community.general.make:
         chdir: "{{ nginx_source_dir }}"
         target: install
-      when: not nginx_compile_install_dynamic_modules_only
+      when: not nginx_install_source_control_prep_compile_only
 
-    - name: Make and Install compiled dynamic modules only (No make and install nginx)
-      when: nginx_compile_install_dynamic_modules_only
-      block:
-        - name: Make modules
-          community.general.make:
-            chdir: "{{ nginx_source_dir }}"
-            target: modules
-        - name: Install modules (copy compiled .so to {{ nginx_install_source_modules_path }})
-          ansible.builtin.copy:
-            src: "{{ nginx_source_dir }}/objs/{{ item.ngx_addon_name }}.so"
-            dest: "{{ nginx_install_source_modules_path }}"
-            remote_src: true
-            owner: nginx
-            group: nginx
-            mode: "0600" # give this permission. If somehow some component. Need to access modules file. You can add 6 permission to the nginx group
-          loop: "{{ nginx_compile_install_dynamic_modules }}"
     - name: Set up systemd
-      when: ansible_facts['service_mgr'] == 'systemd'
+      when:
+        - ansible_facts['service_mgr'] == 'systemd'
+        - not nginx_install_source_control_prep_compile_only
       notify: (Handler) Run NGINX
       block:
         - name: Upload systemd NGINX service file
@@ -457,7 +470,9 @@
             enabled: true
 
     - name: Set up Upstart
-      when: ansible_facts['service_mgr'] == 'upstart'
+      when:
+        - ansible_facts['service_mgr'] == 'upstart'
+        - not nginx_install_source_control_prep_compile_only
       notify: (Handler) Run NGINX
       block:
         - name: Upload Upstart NGINX service file
@@ -489,11 +504,15 @@
         owner: root
         group: root
         mode: "0755"
-      when: ansible_facts['service_mgr'] == 'sysvinit'
+      when:
+        - ansible_facts['service_mgr'] == 'sysvinit'
+        - not nginx_install_source_control_prep_compile_only
       notify: (Handler) Run NGINX
 
     - name: Set up OpenRC
-      when: ansible_facts['service_mgr'] == 'openrc'
+      when:
+        - ansible_facts['service_mgr'] == 'openrc'
+        - not nginx_install_source_control_prep_compile_only
       notify: (Handler) Run NGINX
       block:
         - name: Enable OpenRC
@@ -516,6 +535,8 @@
           ansible.builtin.command: rc-update add nginx default
 
 - name: Cleanup downloads archives
+  when:
+    - not nginx_install_source_control_prep_compile_only
   block:
     - name: Cleanup nginx, pcre, zlip, openssl
       ansible.builtin.file:
@@ -526,10 +547,4 @@
         - "{{ zlib_source['dest'] }}"
         - "{{ openssl_source['dest'] }}"
         - "{{ nginx_source['dest'] }}"
-      when: item is defined
-    - name: Cleanup compiled dynamic modules archives
-      ansible.builtin.file:
-        path: "{{ item.archive }}"
-        state: absent
-      loop: "{{ nginx_compile_install_dynamic_modules }}"
       when: item is defined
