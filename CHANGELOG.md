@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.24.2 (Unreleased)
+## 0.24.2 (October 3rd, 2023)
 
 FEATURES:
 
@@ -8,6 +8,7 @@ FEATURES:
 - Remove Ubuntu kinetic from the list of NGINX OSS tested and supported distributions.
 - Remove Alpine Linux 3.14 and Ubuntu bionic from the list of NGINX Plus tested and supported distributions.
 - The `geoip2` module for NGINX Plus is no longer supported on Amazon Linux.
+- Add support for specific version for NGINX OSS install from source
 
 CI/CD:
 
@@ -33,14 +34,14 @@ ENHANCEMENTS:
 
 BUG FIXES:
 
-- Fix an issue with the platform validation logic where distribution versions ending in `*.*0` would not be correctly identified.
+- Fix an issue with the platform validation logic whereas distro versions ending in `*.*0` would not be correctly identified.
 
 CI/CD:
 
-- Comment out the platform parameter out of Molecule tests. QEMU based tests are failing when trying to test the newest supported distribution.
+- Comment out the platform parameter out of Molecule tests. QEMU based tests are failing when trying to test the newest supported distros.
 - Split Ansible Lint into its own GitHub Actions job since Molecule no longer runs linters natively.
 - Replace `molecule[docker]` with `molecule` and `molecule-plugins[docker]`.
-- Explicitly set the `ansible-compat` version.
+- Explicitly set the `ansible-compat` version (commented out for the time being whilst waiting for a new release of Molecule).
 - Add pre-releases to Release Drafter.
 
 ## 0.24.0 (January 29, 2023)
