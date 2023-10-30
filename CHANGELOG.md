@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.24.3 (unreleased)
+
+FEATURES:
+
+- Add install Dynamic modules from source full set of tools and features. Now you can install dynamic modules from source seamlessly. And for any possible scenario.
+
 ## 0.24.2 (October 3rd, 2023)
 
 FEATURES:
