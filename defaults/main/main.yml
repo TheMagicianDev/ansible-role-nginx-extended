@@ -22,8 +22,6 @@ nginx_type: opensource
 # As in https://nginx.org/download/ `nginx-<version>.<extension>`
 # nginx_version: "1.25.1"
 
-# Nginx service
-
 # Start NGINX service.
 # Default is true.
 nginx_start: true
